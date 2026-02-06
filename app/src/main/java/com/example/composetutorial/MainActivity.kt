@@ -1,76 +1,130 @@
 package com.example.composetutorial
+
+import android.content.Context
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Row
-import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.dp
-import com.example.composetutorial.ui.theme.ComposeTutorialTheme
-import androidx.compose.foundation.border
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.clickable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.material3.Scaffold
-import kotlinx.serialization.Serializable
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.compose.material3.Button
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.activity.enableEdgeToEdge
-import androidx.navigation.NavHostController
+import androidx.room.Room
+import coil.compose.rememberAsyncImagePainter
+import com.example.composetutorial.ui.theme.ComposeTutorialTheme
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+
 @Serializable object Conversation
 @Serializable object Settings
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        //data for saving it to device memory
+        val db = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "saved-data-database"
+        ).build()
+
+        val dao = db.userDao()
         enableEdgeToEdge()
+
         setContent {
-            ComposeTutorialTheme(darkTheme = true) {
+            ComposeTutorialTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     MyAppNavHost(
-                        modifier = Modifier.padding(innerPadding)
+                        modifier = Modifier.padding(innerPadding),
+                        dao = dao
                     )
                 }
             }
         }
     }
 }
-
-data class Message(val author: String, val body: String)
+@Composable
+fun MyAppNavHost(
+    modifier: Modifier = Modifier,
+    navController: NavHostController = rememberNavController(),
+    dao: UserDao
+) {
+    NavHost(
+        modifier = modifier, navController = navController, startDestination = Conversation
+    ) {
+        composable<Conversation> {
+            ConversationScreen(dao = dao,onNavigateToSettings = {
+                navController.navigate(route = Settings)
+            })
+        }
+        composable<Settings> {
+            SettingsScreen(dao = dao, onBack = {
+                navController.navigate(Conversation) {
+                    popUpTo(Conversation) { inclusive = true }
+                }
+            })
+        }
+    }
+}
 
 @Composable
-fun MessageCard(msg: Message) {
+fun ConversationScreen(dao: UserDao, messages: List<Message> = SampleData.conversationSample,
+    onNavigateToSettings: () -> Unit
+) {
+    val savedUserState = dao.getUser().collectAsState(initial = null)
+    val userProfile = savedUserState.value
+    LazyColumn { items(messages) { message ->
+            MessageCard(
+                msg = message,
+                userProfile = userProfile,
+                onProfileClick = { onNavigateToSettings() }
+            )
+        }
+    }
+}
+
+@Composable
+fun MessageCard(msg: Message,userProfile: UserProfile?, onProfileClick: () -> Unit) {
     Row(modifier = Modifier.padding(all = 8.dp)) {
-        Image(painter = painterResource(R.drawable.profile_picture),
-            contentDescription = null,
-            modifier = Modifier
+        val painter = if (userProfile?.imagePath != null) {
+            rememberAsyncImagePainter(File(userProfile.imagePath))
+        } else {
+            painterResource(R.drawable.profile_picture)
+        }
+        Image(painter = painter, contentDescription = null, modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
                 .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                .clickable { onProfileClick() },
+            contentScale = ContentScale.Crop
         )
 
         Spacer(modifier = Modifier.width(8.dp))
@@ -78,6 +132,7 @@ fun MessageCard(msg: Message) {
         var isExpanded by remember { mutableStateOf(false) }
         val surfaceColor by animateColorAsState(
             if (isExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+            label = "colorAnimation"
         )
         Column(modifier = Modifier.clickable { isExpanded = !isExpanded }) {
             Text(text = msg.author, color = MaterialTheme.colorScheme.secondary,
@@ -99,66 +154,103 @@ fun MessageCard(msg: Message) {
 }
 
 @Composable
-fun Conversation(messages: List<Message>) {
-    LazyColumn {
-        items(messages) { message ->
-            MessageCard(message)
+fun SettingsScreen(dao: UserDao, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    var username by remember { mutableStateOf("") }
+    val savedUserState = dao.getUser().collectAsState(initial = null)
+    val savedUser = savedUserState.value
+
+    LaunchedEffect(savedUser) {
+        if (savedUser != null) {
+            if (username.isEmpty()) username = savedUser.username
+            if (savedUser.imagePath != null) {
+                imageUri = Uri.fromFile(File(savedUser.imagePath))
+            }
         }
     }
-}
-//Do this according to jetpack tutorial of navigation Hw2
-@Composable
-fun MyAppNavHost(
-    modifier: Modifier = Modifier,
-    navController: NavHostController = rememberNavController(),
-) {
-    NavHost(modifier = modifier,navController = navController, startDestination = Conversation
-    ) {
-        // This is the first view from HW1
-        composable<Conversation> {
-            ConversationScreen(onNavigateToSettings = {navController.navigate(route = Settings)
-                }
+
+    fun saveAndExit() {
+        scope.launch {
+            dao.insertUser(
+                UserProfile(username = username, imagePath = imageUri?.path
+                )
             )
-        }
-        // This is the new screen
-        composable<Settings> {
-            SettingsScreen(onBack = {navController.navigate(Conversation) {
-                        popUpTo(Conversation) {inclusive = true}
-                    }
-                }
-            )
+            onBack()
         }
     }
-}
-@Composable
-fun ConversationScreen(onNavigateToSettings: () -> Unit) {
-    Column {
-        Button(onClick = onNavigateToSettings,
-            modifier = Modifier.fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Text("Settings")
-        }
-        Conversation(SampleData.conversationSample)
+    //Back saves the state
+    BackHandler {
+        saveAndExit()
     }
-}
-@Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
+
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            val savedPath = saveImageToInternalStorage(context, uri)
+            if (savedPath != null) {
+                imageUri = Uri.fromFile(File(savedPath))
+            }
+        }
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Settings", style = MaterialTheme.typography.headlineMedium)
+        if (imageUri != null) {
+            Image(painter = rememberAsyncImagePainter(imageUri), contentDescription = "Profile Image",
+                modifier = Modifier
+                    .size(150.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            //put all in the center of screen
+            Box(
+                modifier = Modifier
+                    .size(150.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Pic missing", color = Color.White)
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
-        Button(onClick = onBack) {
+
+        Button(onClick = { launcher.launch("image/*") }) {
+            Text(text = "Change pic")
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        TextField(value = username, onValueChange = { username = it },
+            label = { Text("User") }
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(onClick = { saveAndExit() }) {
             Text("Go back")
         }
     }
 }
 
-@Preview
-@Composable
-fun PreviewConversation() {
-    ComposeTutorialTheme {
-        Conversation(SampleData.conversationSample)
+fun saveImageToInternalStorage(context: Context, uri: Uri): String? {
+    val fileName = "profile_image.jpg"
+    val file = File(context.filesDir, fileName)
+
+    return try {
+        val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+        val outputStream = FileOutputStream(file)
+        inputStream?.use { input ->
+            outputStream.use { output ->
+                input.copyTo(output)
+            }
+        }
+        file.absolutePath
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }
