@@ -41,6 +41,10 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.Intent
 
 @Serializable object Conversation
 @Serializable object Settings
@@ -161,7 +165,16 @@ fun SettingsScreen(dao: UserDao, onBack: () -> Unit) {
     var username by remember { mutableStateOf("") }
     val savedUserState = dao.getUser().collectAsState(initial = null)
     val savedUser = savedUserState.value
-
+    //launch when got permission
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = {isGranted ->
+            if (isGranted) {
+                val intent = Intent(context, SensorService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+            }
+        }
+    )
     LaunchedEffect(savedUser) {
         if (savedUser != null) {
             if (username.isEmpty()) username = savedUser.username
@@ -170,7 +183,6 @@ fun SettingsScreen(dao: UserDao, onBack: () -> Unit) {
             }
         }
     }
-
     fun saveAndExit() {
         scope.launch {
             dao.insertUser(
@@ -227,6 +239,25 @@ fun SettingsScreen(dao: UserDao, onBack: () -> Unit) {
         TextField(value = username, onValueChange = { username = it },
             label = { Text("User") }
         )
+        //button for start proximitysensor
+        Button(onClick = {
+            // permission
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                val intent = Intent(context, SensorService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }) {Text("Use proximity sensor")
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+        // stop button fro proximity sensor
+        Button(onClick = {
+            val intent = Intent(context, SensorService::class.java)
+            context.stopService(intent)
+        }) {Text("Stop proximity sensor")
+        }
 
         Spacer(modifier = Modifier.height(10.dp))
 
